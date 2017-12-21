@@ -4,11 +4,13 @@
 // unless a light weight FFT algorithm can be used to help speed this up
 
 //Alexander Shi
-//last modified 19 July 2015
+//last modified 21 December 2017
 #include <Arduino.h>
-//#include <Time.h>
 #include "WordBuilder.cpp"
 #include "DrawingEngine.cpp"
+
+#define LOG_OUT 1
+#define FHT_N 256
 
 // external includes
 #include <FHT.h>
@@ -29,7 +31,7 @@
 static int INTENSITY_THRESHOLD = 350;
 
 static int curValue = 0;
-static int preValue = 0;
+//static int preValue = 0;
 
 DrawingEngine drawingEngine;
 unsigned char mutableWord[1][32];
@@ -73,13 +75,7 @@ void setup()
   pinMode(BUTTON, INPUT);
   pinMode(MICROPHONE, INPUT);
   
-//  for (int i=1; i<=16;i++){
-//  drawPixel(mutableWord, i,i);  
-//  }
 //  WordBuilder::drawCenterDiamond(mutableWord,5);  
-//  WordBuilder::drawPixel(mutableWord,2,2);
-//  WordBuilder::drawPixel(mutableWord,2,15);
-//  WordBuilder::drawPixel(mutableWord,15,2);
 //  WordBuilder::drawPixel(mutableWord,15,15);
     WordBuilder::drawLine(mutableWord, 9,9,13,16);
     WordBuilder::drawLine(mutableWord, 8,9,4,16);
@@ -89,28 +85,64 @@ void setup()
     WordBuilder::drawLine(mutableWord, 9,8,16,4);
     WordBuilder::drawLine(mutableWord, 8,8,1,4);
     WordBuilder::drawLine(mutableWord, 8,9,1,13);
-  Serial.begin(9600);
-  INTENSITY_THRESHOLD = GetSoundThreshold();
-  Serial.println(INTENSITY_THRESHOLD);
+//  Serial.begin(9600);
+//  INTENSITY_THRESHOLD = GetSoundThreshold();
+//  Serial.println(INTENSITY_THRESHOLD);
+
+//  Serial.begin(115200); // use the serial port
+  TIMSK0 = 0; // turn off timer0 for lower jitter
+  ADCSRA = 0xe5; // set the adc to free running mode
+  ADMUX = 0x40; // use adc0
+  DIDR0 = 0x01; // turn off the digital input for adc0
 
   drawingEngine = DrawingEngine();
-  //    WordBuilder::cleanWord(testWord);  
 }
 
 void loop()
 {
-//  preValue = curValue;
-  curValue = analogRead(A0);
-  delay(1); // max analog read speed is about 100 us
-  char hit = curValue>INTENSITY_THRESHOLD;
-  if (!hit){
-    drawingEngine.Display(testWord); 
-  }
-  else{    
-      drawingEngine.Display(mutableWord);
-      Serial.println(curValue);
-      delay(10);
+  while(1) {
+    cli();  
+    // RUNNING THE FHT
+    for (uint16_t i = 0; i < FHT_N; ++i) {
+      // fht_input[i*2] = (uint16_t) analogRead(A0);
+      // fht_input[i*2+1] = 0;
+      while(!(ADCSRA & 0x10)); // wait for adc to be ready
+      ADCSRA = 0xf5; // restart adc
+      byte m = ADCL; // fetch adc data
+      byte j = ADCH;
+      int k = (j << 8) | m; // form into an int
+      k -= 0x0200; // form into a signed int
+      k <<= 6; // form into a 16b signed int
+      fht_input[i] = k; // put real data into bins
+    }
+    // Serial.println("finish buffer fill");
+    fht_window();
+    fht_reorder();
+    fht_run();
+    fht_mag_log();
+    sei();
+
+    WordBuilder::cleanWord(mutableWord);  
+    for (uint8_t i = 0; i < FHT_N/2; ++i) {
+      if (fht_log_out[i] & 0xc0) {
+        WordBuilder::drawPixel(mutableWord, i/16, i%16);      
+      }
+    }
+    drawingEngine.Display(mutableWord);
+    delay(5);
+    drawingEngine.Display(testWord);
+    
+    // BEAT DETECTION
+  //  curValue = analogRead(A0);
+  //  delay(1); // max analog read speed is about 100 us
+  //  char hit = curValue>INTENSITY_THRESHOLD;
+  //  if (!hit){
+  //    drawingEngine.Display(testWord); 
+  //  }
+  //  else{    
+  //      drawingEngine.Display(mutableWord);
+  //      Serial.println(curValue);
+  //      delay(10);
+  //  }
   }
 }
-
-
